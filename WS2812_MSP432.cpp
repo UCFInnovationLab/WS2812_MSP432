@@ -26,18 +26,24 @@ WS2812_MSP432::~WS2812_MSP432() {
 // -----------------------------------------------------------------------------
 
 void WS2812_MSP432::begin() {
-  // Select EUSCI_B0 SIMO function on P1.6
-  P1SEL0 |=  BIT6;
+  // Drive P1.6 LOW as GPIO first to guarantee a clean reset pulse on the
+  // data line before handing the pin to EUSCI. After UCSWRST is cleared the
+  // SIMO idle state is undefined until the first byte is loaded, so we cannot
+  // rely on the peripheral to hold the line LOW for the WS2812 reset window.
+  P1DIR  |=  BIT6;    // output
+  P1OUT  &= ~BIT6;    // drive LOW
+  P1SEL0 &= ~BIT6;    // GPIO function (not EUSCI)
   P1SEL1 &= ~BIT6;
+  delayMicroseconds(50);   // guaranteed LOW for >50 us — WS2812 reset
 
+  // Now configure EUSCI_B0 SPI and assign P1.6 to SIMO
   UCB0CTLW0 |= UCSWRST;                                   // hold in reset while configuring
+  P1SEL0    |=  BIT6;                                      // assign pin to EUSCI_B0 SIMO
+  P1SEL1    &= ~BIT6;
   UCB0CTLW0  = UCCKPH | UCMSB | UCMST | UCSYNC            // SPI: clock phase, MSB first, master, synchronous
               | UCSSEL__SMCLK | UCSWRST;                   // clock = SMCLK, keep in reset
   UCB0BRW    = 2;                                          // SMCLK (12 MHz) / 2 = 6 MHz
   UCB0CTLW0 &= ~UCSWRST;                                   // release reset, SPI is live
-
-  // Give the strip time to reset before the first show() call
-  delayMicroseconds(50);
 }
 
 // -----------------------------------------------------------------------------
@@ -54,19 +60,34 @@ void WS2812_MSP432::spiSendByte(uint8_t b) {
 //
 // Each WS2812 data bit is encoded as one SPI byte (HIGH_CODE or LOW_CODE).
 // Interrupts are disabled for the duration to prevent timing glitches.
+//
+// P1.6 is driven LOW via GPIO before and after EUSCI transmission because
+// EUSCI_B idles SIMO HIGH when not shifting — which would corrupt WS2812
+// timing if the line floats high between frames or during the reset pulse.
 // -----------------------------------------------------------------------------
 
 void WS2812_MSP432::show() {
   if (!_pixels) return;
 
+  // // Guarantee line is LOW before handing to EUSCI (EUSCI_B idles SIMO HIGH)
+  // P1SEL0 &= ~BIT6;          // GPIO function
+  // P1SEL1 &= ~BIT6;
+  // P1DIR  |=  BIT6;
+  // P1OUT  &= ~BIT6;          // drive LOW
+
   noInterrupts();
+
+  P1SEL0 |= BIT6;           // hand pin to EUSCI_B0 SIMO immediately before first byte
 
   uint8_t *p = _pixels;
   for (uint16_t i = 0; i < _numLEDs * 3; i++) {
     uint8_t byte = *p++;
     uint8_t mask = 0x80;
     while (mask) {
-      spiSendByte(byte & mask ? WS2812_HIGH_CODE : WS2812_LOW_CODE);
+      if (i==0 && mask == 0x80)
+        spiSendByte(byte & mask ? 0x00 : 0x00);
+      else
+        spiSendByte(byte & mask ? WS2812_HIGH_CODE : WS2812_LOW_CODE);
       mask >>= 1;
     }
   }
@@ -75,10 +96,16 @@ void WS2812_MSP432::show() {
   // UCTXIFG only means the TX buffer is empty, not that the shift register is done
   while (UCB0STATW & UCBUSY);
 
+  // Take pin back to GPIO and drive LOW — EUSCI_B would idle SIMO HIGH otherwise,
+  // which would prevent the WS2812 reset pulse from being a valid LOW
+  P1SEL0 &= ~BIT6;
+  P1SEL1 &= ~BIT6;
+  P1DIR  |=  BIT6;
+  P1OUT  &= ~BIT6;          // guaranteed LOW for reset pulse
+
   interrupts();
 
-  // Reset pulse: hold line LOW for >50 us
-  delayMicroseconds(50);
+  delayMicroseconds(50);    // >50 us LOW = WS2812 reset
 }
 
 // -----------------------------------------------------------------------------
