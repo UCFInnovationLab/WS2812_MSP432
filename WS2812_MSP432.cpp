@@ -80,6 +80,8 @@ void WS2812_MSP432::show() {
   P1SEL0 |= BIT6;           // hand pin to EUSCI_B0 SIMO immediately before first byte
 
   uint8_t *p = _pixels;
+  spiSendByte(0x00);
+  spiSendByte(0x00);
   for (uint16_t i = 0; i < _numLEDs * 3; i++) {
     uint8_t byte = *p++;
     uint8_t mask = 0x80;
@@ -91,6 +93,8 @@ void WS2812_MSP432::show() {
       mask >>= 1;
     }
   }
+  spiSendByte(0x00);
+  spiSendByte(0x00);
 
   // Wait for shift register to fully finish (UCBUSY clears when last bit is clocked out)
   // UCTXIFG only means the TX buffer is empty, not that the shift register is done
