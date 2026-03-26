@@ -86,10 +86,7 @@ void WS2812_MSP432::show() {
     uint8_t byte = *p++;
     uint8_t mask = 0x80;
     while (mask) {
-      if (i==0 && mask == 0x80)
-        spiSendByte(byte & mask ? 0x00 : 0x00);
-      else
-        spiSendByte(byte & mask ? WS2812_HIGH_CODE : WS2812_LOW_CODE);
+      spiSendByte(byte & mask ? WS2812_HIGH_CODE : WS2812_LOW_CODE);
       mask >>= 1;
     }
   }
